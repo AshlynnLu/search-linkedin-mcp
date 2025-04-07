@@ -1,12 +1,12 @@
-# MCP Server 
+# LinkedIn Company Verification MCP Server
 
-基于MCP协议的专业公司信息验证服务器。
+基于Model Context Protocol (MCP)的LinkedIn公司页面验证服务。
 
-## 功能
+## 功能概述
 
-- **公司搜索**：搜索公司的LinkedIn页面和其他相关信息
-- **公司验证**：验证LinkedIn页面是否是公司的官方页面
-- **公司信息提取**：从公司页面提取关键信息
+- **公司搜索**：搜索公司的LinkedIn页面
+- **并行网页爬取**：批量爬取多个网页内容
+- **智能验证**：验证页面内容是否为目标公司的官方页面
 
 ## ⚠️ 重要提示：环境变量配置
 
@@ -19,7 +19,7 @@
 
 ### 推荐的代理配置（提高访问稳定性）
 
-- `PROXY_SERVER` - 代理服务器地址（如 "proxy.example.com:23123"）
+- `PROXY_SERVER` - 代理服务器地址（如 "proxy.example.com:31212"）
 - `PROXY_USERNAME` - 代理用户名
 - `PROXY_PASSWORD` - 代理密码
 
@@ -100,37 +100,29 @@ npm run start
 
 服务启动后，如果有任何环境变量未配置，会在日志中显示警告信息。
 
-## 功能示例
+## MCP工具功能
 
-服务器支持以下MCP协议功能：
+服务器提供以下MCP工具：
 
-1. `search_company`: 搜索公司LinkedIn页面（需要配置SHANGJI_SERPER_DEV_WEB_SEARCH_KEY）
+1. `search_company`: 搜索公司LinkedIn页面
    - 参数: `company_name` (公司名称)
-   - 返回: 搜索结果列表
+   - 返回: 搜索结果列表，包含URL、标题和摘要
 
-2. `crawl_company`: 爬取指定URL的页面内容（推荐配置代理信息）
-   - 参数: `url` (要爬取的URL)
-   - 返回: 爬取的页面内容
-
-3. `crawl_multiple_pages`: 并行爬取多个URL的页面内容（推荐配置代理信息）
+2. `crawl_multiple_pages`: 并行爬取多个URL的页面内容
    - 参数: `urls` (要爬取的URL列表)
    - 返回: 所有爬取的页面内容
 
-4. `verify_company_content`: 验证页面内容是否匹配指定公司（需要配置OPENAI_API_KEY）
-   - 参数: `company_name`, `page_content`, `page_url`
-   - 返回: 验证结果
-
-5. `verify_multiple_contents`: 批量验证多个页面内容（需要配置OPENAI_API_KEY）
+3. `verify_multiple_contents`: 批量验证多个页面内容
    - 参数: `company_name`, `pages` (URL和内容列表)
    - 返回: 所有验证结果和最佳匹配
 
-6. `verify_company`: 完整验证流程，包括搜索、爬取和验证（需要配置所有环境变量）
+4. `verify_company`: 完整验证流程，包括搜索、爬取和验证
    - 参数: `company_name`, `official_website` (可选)
    - 返回: 验证结果，包含匹配的LinkedIn页面URL
 
 ## 日志
 
-所有组件都会生成单独的日志文件：
+所有组件会生成单独的日志文件：
 
 - `mcp-server.log`: 主服务器日志
 - `crawler.log`: 网页爬虫日志
@@ -153,4 +145,4 @@ npm run start
 
 ## 许可
 
-Copyright © Ashlynn
+MIT License
