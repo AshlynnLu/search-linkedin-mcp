@@ -1,4 +1,4 @@
-# MCP Server 2Brain
+# MCP Server 
 
 基于MCP协议的专业公司信息验证服务器。
 
@@ -19,7 +19,7 @@
 
 ### 推荐的代理配置（提高访问稳定性）
 
-- `PROXY_SERVER` - 代理服务器地址（如 "proxy.example.com:31212"）
+- `PROXY_SERVER` - 代理服务器地址（如 "proxy.example.com:23123"）
 - `PROXY_USERNAME` - 代理用户名
 - `PROXY_PASSWORD` - 代理密码
 
@@ -27,8 +27,8 @@
 
 1. 克隆仓库：
 ```bash
-git clone git@github.com:yourusername/mcp-server-2brain.git
-cd mcp-server-2brain
+git clone https://github.com/AshlynnLu/search-linkedin-mcp.git
+cd search-linkedin-mcp
 ```
 
 2. 安装依赖：
@@ -153,4 +153,4 @@ npm run start
 
 ## 许可
 
-Copyright © 2023-2024 Shanghai 2Brain Technology Co., Ltd.
+Copyright © Ashlynn
