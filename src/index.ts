@@ -20,6 +20,8 @@ import fs from 'fs';
 import { WebCrawler } from "./crawler.js";
 import { verifyCompanyMatch } from "./llm.js";
 import { getParamValue, ENV_NAMES } from "./config/env.js";
+import { ImportKeyTool, IMPORTKEY_ENV_NAMES } from "./importKeyTool.js";
+import { AsyncImportKeyTools } from './asyncImportKeyTools.js';
 
 // 简单日志辅助函数，在开发时使用文件记录而不是控制台输出
 const logger = {
@@ -76,10 +78,15 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                           getParamValue(ENV_NAMES.PROXY_USERNAME) && 
                           getParamValue(ENV_NAMES.PROXY_PASSWORD);
   
+  // ImportKey 登录凭证状态
+  const importkeyConfigured = getParamValue(IMPORTKEY_ENV_NAMES.EMAIL) &&
+                             getParamValue(IMPORTKEY_ENV_NAMES.PASSWORD);
+  
   // 未配置API密钥时的提示信息
   const searchWarning = !serperApiKey ? "（请先配置SHANGJI_SERPER_DEV_WEB_SEARCH_KEY环境变量）" : "";
   const verifyWarning = !openaiApiKey ? "（请先配置OPENAI_API_KEY环境变量）" : "";
   const crawlWarning = !proxyConfigured ? "（推荐配置代理环境变量以获得更稳定结果）" : "";
+  const importkeyWarning = !importkeyConfigured ? "（请先配置IMPORTKEY_EMAIL和IMPORTKEY_PASSWORD环境变量）" : "";
 
   return {
     tools: [
@@ -165,6 +172,53 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             }
           },
           required: ["company_name"]
+        }
+      },
+      {
+        name: "get_customs_data",
+        description: `获取公司海关数据（从ImportKey网站爬取）${importkeyWarning}`,
+        inputSchema: {
+          type: "object",
+          properties: {
+            company_name: {
+              type: "string",
+              description: "公司名称"
+            }
+          },
+          required: ["company_name"]
+        }
+      },
+      {
+        name: "create_customs_data_task",
+        description: `创建海关数据获取任务（异步执行，解决超时问题）${importkeyWarning}`,
+        inputSchema: {
+          type: "object",
+          properties: {
+            company_name: {
+              type: "string",
+              description: "公司名称"
+            },
+            data_type: {
+              type: "string",
+              description: "数据类型: buyer(买家), supplier(供应商), both(两者)",
+              enum: ["buyer", "supplier", "both"]
+            }
+          },
+          required: ["company_name"]
+        }
+      },
+      {
+        name: "get_task_status",
+        description: "获取任务执行状态",
+        inputSchema: {
+          type: "object",
+          properties: {
+            task_id: {
+              type: "string",
+              description: "任务ID"
+            }
+          },
+          required: ["task_id"]
         }
       }
     ]
@@ -460,6 +514,141 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
     }
 
+    case "get_customs_data": {
+      const companyName = String(request.params.arguments?.company_name);
+      
+      if (!companyName) {
+        throw new Error("公司名称是必需的");
+      }
+
+      try {
+        // 设置超时处理
+        const timeoutPromise = new Promise<null>((_, reject) => {
+          setTimeout(() => reject(new Error("ImportKey数据获取超时")), 240000); // 4分钟超时
+        });
+
+        // 调用ImportKey工具获取海关数据
+        const dataPromise = ImportKeyTool.getCompanyCustomsData(companyName, request);
+        
+        // 使用Promise.race处理超时
+        const result = await Promise.race([
+          dataPromise,
+          timeoutPromise.then(() => {
+            logger.error(`获取公司"${companyName}"海关数据超时`);
+            throw new Error("数据获取超时");
+          })
+        ]);
+        
+        // 返回JSON格式结果
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              success: true,
+              company_name: companyName,
+              buyer_data: result.buyer_data,
+              supplier_data: result.supplier_data,
+              timestamp: result.timestamp
+            })
+          }]
+        };
+      } catch (error) {
+        logger.error(`获取公司"${companyName}"海关数据失败: ${error}`);
+        
+        // 返回JSON格式错误信息
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              success: false,
+              company_name: companyName,
+              error: `获取海关数据失败: ${error instanceof Error ? error.message : String(error)}`
+            })
+          }]
+        };
+      }
+    }
+
+    case "create_customs_data_task": {
+      const companyName = String(request.params.arguments?.company_name);
+      const dataType = String(request.params.arguments?.data_type || 'both') as 'buyer' | 'supplier' | 'both';
+      
+      if (!companyName) {
+        throw new Error("公司名称是必需的");
+      }
+
+      try {
+        // 创建异步任务
+        const taskInfo = await AsyncImportKeyTools.createCustomsDataTask(companyName, dataType, request);
+        
+        // 返回任务信息
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              success: true,
+              message: `已创建${taskInfo.type}任务，请使用get_task_status工具查询任务状态`,
+              task_id: taskInfo.task_id,
+              company_name: taskInfo.company_name,
+              type: taskInfo.type,
+              status: taskInfo.status,
+              created_at: taskInfo.created_at
+            })
+          }]
+        };
+      } catch (error) {
+        logger.error(`创建公司"${companyName}"的海关数据任务失败: ${error}`);
+        
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              success: false,
+              company_name: companyName,
+              error: `创建海关数据任务失败: ${error instanceof Error ? error.message : String(error)}`
+            })
+          }]
+        };
+      }
+    }
+
+    case "get_task_status": {
+      const taskId = String(request.params.arguments?.task_id);
+      
+      if (!taskId) {
+        throw new Error("任务ID是必需的");
+      }
+
+      try {
+        // 获取任务状态
+        const taskStatus = await AsyncImportKeyTools.getTaskStatus(taskId);
+        
+        // 返回任务状态
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              success: true,
+              ...taskStatus
+            })
+          }]
+        };
+      } catch (error) {
+        logger.error(`获取任务状态失败: ${error}`);
+        
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              success: false,
+              task_id: taskId,
+              error: `获取任务状态失败: ${error instanceof Error ? error.message : String(error)}`
+            })
+          }]
+        };
+      }
+    }
+
     default:
       throw new Error("Unknown tool");
   }
@@ -476,6 +665,8 @@ async function main() {
   const proxyServer = getParamValue(ENV_NAMES.PROXY_SERVER);
   const proxyUsername = getParamValue(ENV_NAMES.PROXY_USERNAME);
   const proxyPassword = getParamValue(ENV_NAMES.PROXY_PASSWORD);
+  const importkeyEmail = getParamValue(IMPORTKEY_ENV_NAMES.EMAIL);
+  const importkeyPassword = getParamValue(IMPORTKEY_ENV_NAMES.PASSWORD);
 
   // 检查API密钥
   if (!serperApiKey) {
@@ -491,11 +682,17 @@ async function main() {
     logger.error("未完整配置代理服务器信息(PROXY_SERVER/PROXY_USERNAME/PROXY_PASSWORD)，网络访问可能受限");
   }
   
+  // 检查ImportKey登录凭证
+  if (!importkeyEmail || !importkeyPassword) {
+    logger.error("未配置ImportKey登录凭证(IMPORTKEY_EMAIL/IMPORTKEY_PASSWORD)，海关数据功能将不可用");
+  }
+  
   // 启动日志信息
   logger.info(`启动MCP服务器 shangjitong v0.1.0`);
   if (serperApiKey) logger.info("已配置Google搜索API");
   if (openaiApiKey) logger.info("已配置OpenAI API");
   if (proxyServer && proxyUsername && proxyPassword) logger.info("已配置代理服务器");
+  if (importkeyEmail && importkeyPassword) logger.info("已配置ImportKey登录凭证");
   
   const transport = new StdioServerTransport();
   await server.connect(transport);
@@ -505,3 +702,12 @@ main().catch((error) => {
   logger.error("Server error", error);
   process.exit(1);
 });
+
+// 定期清理过期任务
+setInterval(() => {
+  try {
+    AsyncImportKeyTools.cleanupTasks();
+  } catch (error) {
+    logger.error(`清理过期任务失败: ${error}`);
+  }
+}, 24 * 60 * 60 * 1000); // 每天清理一次

@@ -1,12 +1,13 @@
 # LinkedIn Company Verification MCP Server
 
-基于Model Context Protocol (MCP)的LinkedIn公司页面验证服务。
+基于Model Context Protocol (MCP)的LinkedIn公司页面验证服务和ImportKey海关数据爬取服务。
 
 ## 功能概述
 
 - **公司搜索**：搜索公司的LinkedIn页面
 - **并行网页爬取**：批量爬取多个网页内容
 - **智能验证**：验证页面内容是否为目标公司的官方页面
+- **海关数据获取**：从ImportKey网站爬取公司海关数据
 
 ## ⚠️ 重要提示：环境变量配置
 
@@ -16,6 +17,11 @@
 
 - `SHANGJI_SERPER_DEV_WEB_SEARCH_KEY` - Google搜索API密钥（使用Serper服务）
 - `OPENAI_API_KEY` - OpenAI API密钥（用于验证功能）
+
+### ImportKey登录凭证（用于海关数据功能）
+
+- `IMPORTKEY_EMAIL` - ImportKey登录邮箱
+- `IMPORTKEY_PASSWORD` - ImportKey登录密码
 
 ### 推荐的代理配置（提高访问稳定性）
 
@@ -119,6 +125,10 @@ npm run start
 4. `verify_company`: 完整验证流程，包括搜索、爬取和验证
    - 参数: `company_name`, `official_website` (可选)
    - 返回: 验证结果，包含匹配的LinkedIn页面URL
+
+5. `get_customs_data`: 获取公司海关数据（从ImportKey网站爬取）
+   - 参数: `company_name` (公司名称)
+   - 返回: 公司的买家和供应商海关数据
 
 ## 日志
 

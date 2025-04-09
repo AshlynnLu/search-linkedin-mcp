@@ -16,7 +16,11 @@ export const ENV_NAMES = {
   // 代理用户名
   PROXY_USERNAME: 'PROXY_USERNAME',
   // 代理密码
-  PROXY_PASSWORD: 'PROXY_PASSWORD'
+  PROXY_PASSWORD: 'PROXY_PASSWORD',
+  // ImportKey邮箱
+  IMPORTKEY_EMAIL: 'IMPORTKEY_EMAIL',
+  // ImportKey密码
+  IMPORTKEY_PASSWORD: 'IMPORTKEY_PASSWORD'
 };
 
 // 默认值（已移除，用户必须提供自己的环境变量）
