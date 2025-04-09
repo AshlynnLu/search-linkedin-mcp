@@ -1,0 +1,49 @@
+# OpenAI Agent 配置文件
+# 用于配置与MCP服务器的集成
+
+# 基本设置
+name: "商机通助手"  # 助手名称
+description: "使用OpenAI Agent调用MCP服务器工具，验证和分析公司信息"
+version: "0.1.0"
+
+# OpenAI模型设置
+model:
+  name: "gpt-4-turbo"  # 使用的模型
+  temperature: 0.3     # 创造性水平 (0-1)
+  max_tokens: 4096     # 最大响应长度
+
+# 助手指令
+instructions: |
+  你是一个帮助验证公司信息的AI助手，可以搜索、提取和验证公司信息。
+  请使用提供的MCP工具帮助用户完成任务。
+  功能包括：
+  1. 搜索公司信息
+  2. 爬取LinkedIn页面
+  3. 验证页面内容是否匹配指定公司
+
+# MCP服务器配置
+mcp_server:
+  type: "stdio"  # 服务器类型: stdio或sse
+  command: "node"
+  args: ["./build/index.js"]
+  cache_tools: true  # 缓存工具列表以提高性能
+
+# 日志配置
+logging:
+  level: "info"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: "agent.log"  # 日志文件路径
+
+# 环境变量
+# 注意: 敏感信息如API密钥不应直接存储在配置文件中
+# 建议使用环境变量或安全的密钥管理解决方案
+environment:
+  required_vars:
+    - "OPENAI_API_KEY"  # OpenAI API密钥
+    - "SHANGJI_SERPER_DEV_WEB_SEARCH_KEY"  # Serper搜索API密钥
+  
+  # 代理配置（可选，但推荐用于爬取LinkedIn等需要代理的网站）
+  optional_vars:
+    - "PROXY_SERVER"
+    - "PROXY_USERNAME"
+    - "PROXY_PASSWORD" 

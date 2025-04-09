@@ -455,21 +455,90 @@ class OpenAIAgentWithMCP:
                 logger.warning(f"获取助手失败: {e}，将创建新助手")
         
         # 获取MCP服务器工具
-        tools = await self.start_mcp_server()
+        tools_data = await self.start_mcp_server()
+        
+        # 将MCP工具转换为OpenAI可接受的格式
+        openai_tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": tool.get("name", f"tool_{i}"),
+                    "description": tool.get("description", "MCP工具"),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
+                        "required": []
+                    }
+                }
+            }
+            for i, tool in enumerate(tools_data.get("tools", []))
+        ]
+        
+        # 为每个工具添加参数定义
+        for i, tool in enumerate(tools_data.get("tools", [])):
+            tool_name = tool.get("name", "")
+            if tool_name == "search_company":
+                openai_tools[i]["function"]["parameters"] = {
+                    "type": "object",
+                    "properties": {
+                        "company_name": {
+                            "type": "string",
+                            "description": "要搜索的公司名称"
+                        }
+                    },
+                    "required": ["company_name"]
+                }
+            elif tool_name == "crawl_multiple_pages":
+                openai_tools[i]["function"]["parameters"] = {
+                    "type": "object",
+                    "properties": {
+                        "urls": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            },
+                            "description": "要爬取的URL列表"
+                        }
+                    },
+                    "required": ["urls"]
+                }
+            elif tool_name == "verify_multiple_contents":
+                openai_tools[i]["function"]["parameters"] = {
+                    "type": "object",
+                    "properties": {
+                        "company_name": {
+                            "type": "string",
+                            "description": "公司名称"
+                        },
+                        "pages": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "url": {
+                                        "type": "string"
+                                    },
+                                    "content": {
+                                        "type": "string"
+                                    }
+                                }
+                            },
+                            "description": "要验证的页面内容列表"
+                        },
+                        "official_website": {
+                            "type": "string",
+                            "description": "公司官方网站（可选）"
+                        }
+                    },
+                    "required": ["company_name", "pages"]
+                }
         
         # 创建新助手
         self.assistant = self.client.beta.assistants.create(
             name="商机通助手",
-            instructions="你是一个帮助验证公司信息的AI助手，可以搜索、提取和验证公司信息。请使用提供的MCP工具帮助用户完成任务。",
+            instructions="你是一个帮助验证公司信息的AI助手，可以搜索、提取和验证公司信息。你有以下工具可用：\n1. search_company: 搜索公司信息\n2. crawl_multiple_pages: 爬取多个LinkedIn页面\n3. verify_multiple_contents: 验证页面内容是否匹配公司",
             model=self.model,
-            tools=[
-                {
-                    "type": "mcp",
-                    "mcp": {
-                        "server": self.mcp_server
-                    }
-                }
-            ]
+            tools=openai_tools
         )
         self.assistant_id = self.assistant.id
         logger.info(f"已创建新助手，ID: {self.assistant_id}")
@@ -505,16 +574,69 @@ class OpenAIAgentWithMCP:
         )
         logger.info(f"已启动运行，ID: {run.id}")
         
-        # 等待运行完成
-        while run.status in ["queued", "in_progress"]:
-            logger.info(f"运行状态: {run.status}，等待完成...")
-            await asyncio.sleep(1)  # 轮询间隔
+        # 等待运行完成或需要响应
+        while True:
             run = self.client.beta.threads.runs.retrieve(
                 thread_id=self.thread.id,
                 run_id=run.id
             )
+            
+            # 检查运行状态
+            if run.status == "requires_action" and run.required_action and run.required_action.type == "submit_tool_outputs":
+                logger.info("需要执行工具调用")
+                
+                # 处理工具调用请求
+                tool_calls = run.required_action.submit_tool_outputs.tool_calls
+                tool_outputs = []
+                
+                for tool_call in tool_calls:
+                    function_name = tool_call.function.name
+                    function_args = json.loads(tool_call.function.arguments)
+                    
+                    logger.info(f"调用工具: {function_name}，参数: {function_args}")
+                    
+                    try:
+                        # 执行MCP工具调用
+                        if function_name == "search_company":
+                            result = await self.mcp_server.call_tool("search_company", function_args)
+                        elif function_name == "crawl_multiple_pages":
+                            result = await self.mcp_server.call_tool("crawl_multiple_pages", function_args)
+                        elif function_name == "verify_multiple_contents":
+                            result = await self.mcp_server.call_tool("verify_multiple_contents", function_args)
+                        else:
+                            result = {"error": f"未知工具: {function_name}"}
+                        
+                        # 将结果转换为字符串
+                        result_str = json.dumps(result, ensure_ascii=False)
+                        
+                    except Exception as e:
+                        logger.error(f"工具调用失败: {e}")
+                        result_str = json.dumps({"error": str(e)}, ensure_ascii=False)
+                    
+                    # 添加到输出结果
+                    tool_outputs.append({
+                        "tool_call_id": tool_call.id,
+                        "output": result_str
+                    })
+                
+                # 提交工具调用结果
+                run = self.client.beta.threads.runs.submit_tool_outputs(
+                    thread_id=self.thread.id,
+                    run_id=run.id,
+                    tool_outputs=tool_outputs
+                )
+                logger.info("已提交工具调用结果")
+            
+            # 检查是否完成
+            elif run.status in ["completed", "failed", "cancelled", "expired"]:
+                logger.info(f"运行完成，最终状态: {run.status}")
+                break
+            
+            # 继续等待
+            else:
+                logger.info(f"运行状态: {run.status}，等待完成...")
+                await asyncio.sleep(2)  # 轮询间隔
         
-        logger.info(f"运行完成，最终状态: {run.status}")
         return run
     
     async def get_assistant_responses(self):
