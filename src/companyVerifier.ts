@@ -51,14 +51,16 @@ export class CompanyVerifier {
   /**
    * 验证公司LinkedIn页面
    * @param companyName 公司名称
-   * @param officialWebsite 公司官方网站（可选）
-   * @param progressUpdate 可选的进度更新回调函数
+   * @param officialWebsite 公司官方网站URL（可选）
+   * @param progressUpdate 进度更新回调（可选）
+   * @param request MCP请求对象，用于代理配置等（可选）
    * @returns 验证结果
    */
   public static async verifyCompanyLinkedIn(
     companyName: string,
     officialWebsite?: string,
-    progressUpdate?: ProgressUpdateFn
+    progressUpdate?: ProgressUpdateFn,
+    request?: any
   ): Promise<VerificationResult> {
     try {
       // 发送初始进度更新
@@ -95,8 +97,8 @@ export class CompanyVerifier {
       
       const urls = searchResults.map(result => result.link);
       
-      // 使用并发爬虫爬取所有页面
-      const pageContents = await WebCrawler.crawlMultiplePages(urls);
+      // 使用并发爬虫爬取所有页面，传递request参数用于代理配置
+      const pageContents = await WebCrawler.crawlMultiplePages(urls, request);
       
       logToFile(`爬取完成，成功爬取 ${pageContents.size} 个页面`);
       progressUpdate?.(`已成功爬取 ${pageContents.size} 个页面，正在验证内容...`);

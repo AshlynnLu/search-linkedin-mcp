@@ -111,7 +111,9 @@ export class WebCrawler {
         logToFile('初始化浏览器...');
         this.browserPromise = playwright.chromium.launch({
           headless: true,
-          args: ['--disable-gpu', '--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+          args: ['--disable-gpu', '--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+          // 使用per-context代理模式，让每个context可以使用自己的代理设置
+          proxy: { server: "http://per-context" }
         });
       }
       
@@ -135,11 +137,14 @@ export class WebCrawler {
    * @param request 可选的MCP请求对象
    * @returns 返回网页内容文本
    */
-  public static async crawlPage(url: string, retries = 2, request?: any): Promise<string> {
+  public static async crawlPage(url: string | any, retries = 2, request?: any): Promise<string> {
     // 获取信号量，控制并发
     await this.semaphore.acquire();
     
-    logToFile(`开始爬取页面(剩余重试次数:${retries}): ${url}`);
+    // 确保URL是字符串
+    const targetUrl = typeof url === 'string' ? url : String(url);
+    
+    logToFile(`开始爬取页面(剩余重试次数:${retries}): ${targetUrl}`);
     
     // 获取代理配置
     const proxy = this.getProxy(request);
@@ -210,7 +215,7 @@ export class WebCrawler {
       const startTime = Date.now();
       
       // 使用Promise.race添加额外的超时控制
-      const navigationPromise = page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
+      const navigationPromise = page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
       const timeoutPromise = new Promise((_, reject) => {
         setTimeout(() => reject(new Error('页面加载超时')), 25000);
       });
@@ -231,14 +236,14 @@ export class WebCrawler {
       // 解析HTML内容提取文本
       return this.parseHtml(content);
     } catch (error) {
-      logToFile(`爬取页面失败 ${url}: ${error instanceof Error ? error.message : String(error)}`, true);
+      logToFile(`爬取页面失败 ${targetUrl}: ${error instanceof Error ? error.message : String(error)}`, true);
       
       // 如果还有重试次数，则重试
       if (retries > 0) {
-        logToFile(`尝试重新爬取页面: ${url}，剩余重试次数: ${retries - 1}`);
+        logToFile(`尝试重新爬取页面: ${targetUrl}，剩余重试次数: ${retries - 1}`);
         // 释放信号量
         this.semaphore.release();
-        return this.crawlPage(url, retries - 1, request);
+        return this.crawlPage(targetUrl, retries - 1, request);
       }
       
       return "";
@@ -284,20 +289,161 @@ export class WebCrawler {
   /**
    * 批量并发爬取多个URL
    * @param urls 要爬取的URL列表
+   * @param request 可选的MCP请求对象
    * @returns 爬取结果，URL和内容的映射
    */
-  public static async crawlMultiplePages(urls: string[]): Promise<Map<string, string>> {
+  public static async crawlMultiplePages(urls: string[], request?: any): Promise<Map<string, string>> {
     logToFile(`开始批量爬取 ${urls.length} 个页面`);
     
+    // 确保浏览器已安装
+    this.ensureBrowserInstalled();
+    
     const results = new Map<string, string>();
-    const promises = urls.map(url => this.crawlPage(url).then(content => {
-      results.set(url, content);
-      return { url, content };
-    }));
     
-    await Promise.all(promises);
+    // 避免创建过多的并行任务
+    const batchSize = 5; // 最大并行处理数量
+    const batches = [];
+    
+    // 将URL分成多个批次
+    for (let i = 0; i < urls.length; i += batchSize) {
+      batches.push(urls.slice(i, i + batchSize));
+    }
+    
+    // 获取单个浏览器实例
+    const browser = await this.getBrowser();
+    
+    // 按批次处理
+    for (const batchUrls of batches) {
+      const batchPromises = batchUrls.map(async (url) => {
+        // 确保URL是字符串
+        const targetUrl = typeof url === 'string' ? url : String(url);
+        
+        // 获取代理配置
+        const proxy = this.getProxy(request);
+        if (proxy) {
+          logToFile(`使用代理: ${proxy.server}`);
+        } else {
+          logToFile('未配置代理，直接访问');
+        }
+        
+        let context: playwright.BrowserContext | null = null;
+        let page: playwright.Page | null = null;
+        let retries = 2;
+        
+        while (retries >= 0) {
+          try {
+            logToFile(`开始爬取页面(剩余重试次数:${retries}): ${targetUrl}`);
+            
+            // 创建新的上下文，使用代理（如果有）
+            const contextOptions: playwright.BrowserContextOptions = {
+              userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+            };
+            
+            // 如果有代理，添加到选项中
+            if (proxy) {
+              contextOptions.proxy = proxy;
+            }
+            
+            context = await browser.newContext(contextOptions);
+            
+            // 设置超时
+            context.setDefaultTimeout(20000);
+            
+            page = await context.newPage();
+            
+            // 设置网络超时
+            page.setDefaultNavigationTimeout(20000);
+            page.setDefaultTimeout(20000);
+            
+            // 记录流量
+            let totalBytes = 0;
+            
+            // 创建 CDP 会话监控流量
+            const client = await context.newCDPSession(page);
+            await client.send('Network.enable');
+            client.on('Network.loadingFinished', event => {
+              if ('encodedDataLength' in event) {
+                totalBytes += (event as any).encodedDataLength;
+              }
+            });
+            
+            // 资源拦截：阻止加载图片、字体、样式表、音视频
+            await page.route('**/*', async (route) => {
+              try {
+                const resourceType = route.request().resourceType();
+                if (['image', 'font', 'stylesheet', 'media'].includes(resourceType)) {
+                  await route.abort();
+                } else {
+                  await route.continue();
+                }
+              } catch (err) {
+                try {
+                  await route.continue();
+                } catch {
+                  // 忽略错误
+                }
+              }
+            });
+            
+            const startTime = Date.now();
+            
+            // 使用Promise.race添加额外的超时控制
+            const navigationPromise = page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
+            const timeoutPromise = new Promise((_, reject) => {
+              setTimeout(() => reject(new Error('页面加载超时')), 25000);
+            });
+            
+            await Promise.race([navigationPromise, timeoutPromise]);
+            
+            // 等待页面内容加载
+            await page.waitForLoadState('domcontentloaded', { timeout: 10000 }).catch(() => {
+              logToFile('等待页面加载状态超时，继续处理', true);
+            });
+            
+            // 获取页面内容
+            const content = await page.content();
+            
+            const endTime = Date.now();
+            logToFile(`页面加载完成，耗时: ${endTime - startTime}ms，数据传输: ${totalBytes / 1024}KB`);
+            
+            // 解析HTML内容提取文本
+            const parsedContent = this.parseHtml(content);
+            results.set(targetUrl, parsedContent);
+            
+            // 成功爬取后退出重试循环
+            break;
+          } catch (error) {
+            logToFile(`爬取页面失败 ${targetUrl}: ${error instanceof Error ? error.message : String(error)}`, true);
+            
+            // 如果还有重试次数，则重试
+            if (retries > 0) {
+              logToFile(`尝试重新爬取页面: ${targetUrl}，剩余重试次数: ${retries - 1}`);
+              retries--;
+              // 继续下一次重试
+            } else {
+              // 重试用完了，返回空字符串
+              results.set(targetUrl, "");
+              break;
+            }
+          } finally {
+            // 确保资源关闭
+            try {
+              if (page) await page.close();
+              if (context) await context.close();
+            } catch (error) {
+              logToFile(`关闭浏览器资源时出错: ${error}`, true);
+            }
+          }
+        }
+        
+        return targetUrl;
+      });
+      
+      // 等待当前批次完成
+      await Promise.all(batchPromises);
+    }
+    
     logToFile(`批量爬取完成，成功爬取 ${results.size} 个页面`);
-    
     return results;
   }
   

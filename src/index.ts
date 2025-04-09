@@ -149,6 +149,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           required: ["company_name", "pages"]
         }
       },
+      /* 暂时注释掉verify_company工具
       {
         name: "verify_company",
         description: `验证公司LinkedIn页面（完整流程，需配置所有环境变量）${!serperApiKey || !openaiApiKey || !proxyConfigured ? "（请先完成所有环境变量配置）" : ""}`,
@@ -167,6 +168,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           required: ["company_name"]
         }
       }
+      */
     ]
   };
 });
@@ -219,44 +221,34 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
     
     case "crawl_multiple_pages": {
-      const urls = request.params.arguments?.urls as string[] | undefined;
+      const urlsParam = request.params.arguments?.urls;
+      let urls: string[] = [];
       
-      if (!urls || !Array.isArray(urls) || urls.length === 0) {
+      // 确保urls是字符串数组
+      if (Array.isArray(urlsParam)) {
+        // 过滤并转换数组中的每个项目为字符串
+        urls = urlsParam
+          .filter(item => item !== null && item !== undefined)
+          .map(item => typeof item === 'string' ? item : String(item));
+      } else if (typeof urlsParam === 'string') {
+        // 如果是单个字符串，转为数组
+        urls = [urlsParam];
+      } else if (urlsParam) {
+        // 如果是其他类型，尝试转为字符串
+        urls = [String(urlsParam)];
+      }
+      
+      if (urls.length === 0) {
         throw new Error("URL列表是必需的，且不能为空");
       }
 
       try {
-        // 修改爬取函数，添加请求参数
-        const promises = urls.map(url => WebCrawler.crawlPage(url, 2, request));
-        const pageContents = await Promise.all(promises);
-        
-        // 处理爬取结果，创建URL和内容的映射
-        const resultsMap = new Map<string, string>();
-        urls.forEach((url, index) => {
-          const content = pageContents[index];
-          if (content) {
-            resultsMap.set(url, content);
-          }
-        });
-        
-        if (resultsMap.size === 0) {
-          // 所有爬取都失败
-          return {
-            content: [{
-              type: "text",
-              text: JSON.stringify({
-                success: false,
-                urls: urls,
-                error: "所有页面爬取失败",
-                results: []
-              })
-            }]
-          };
-        }
+        // 使用优化后的批量爬取函数
+        const pageContentsMap = await WebCrawler.crawlMultiplePages(urls, request);
         
         // 处理爬取结果
         const results = urls.map(url => {
-          const content = resultsMap.get(url);
+          const content = pageContentsMap.get(url);
           if (!content) {
             return {
               url,
@@ -284,7 +276,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             text: JSON.stringify({
               success: true,
               total: urls.length,
-              success_count: resultsMap.size,
+              success_count: results.filter(r => r.success).length,
               results: results
             })
           }]
@@ -409,6 +401,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
     }
 
+    /* 暂时注释掉verify_company处理逻辑
     case "verify_company": {
       const companyName = String(request.params.arguments?.company_name);
       const officialWebsite = request.params.arguments?.official_website as string | undefined;
@@ -418,8 +411,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       try {
-        // 使用CompanyVerifier验证LinkedIn页面
-        const result = await CompanyVerifier.verifyCompanyLinkedIn(companyName, officialWebsite);
+        // 使用CompanyVerifier验证LinkedIn页面，传递request参数用于代理配置
+        const result = await CompanyVerifier.verifyCompanyLinkedIn(companyName, officialWebsite, undefined, request);
         
         if (!result.success) {
           // 返回简化的JSON格式错误信息
@@ -459,6 +452,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
     }
+    */
 
     default:
       throw new Error("Unknown tool");
