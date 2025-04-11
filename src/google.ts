@@ -39,8 +39,8 @@ interface SerperResponse {
 export async function serperDevSearch(query: string, site?: string, numResults: number = 3, request?: any): Promise<SerperResponse> {
   const url = "https://google.serper.dev/search";
   
-  // 调整为只搜索LinkedIn公司页面
-  // 如果提供了特定网站，则使用该网站；否则默认使用linkedin.com/company
+  // 调整为只搜索LinkedIn页面
+  // 如果提供了特定网站，则使用该网站；否则默认使用linkedin.com
   const siteRestriction = site || 'linkedin.com/company';
   const fullQuery = `${query} site:${siteRestriction}`;
   
@@ -51,9 +51,8 @@ export async function serperDevSearch(query: string, site?: string, numResults: 
     num: numResults
   });
 
-  // 获取API密钥，优先使用请求中的认证信息，然后尝试环境变量
-  const apiKey = request ? getAuthValue(request, ENV_NAMES.SERPER_API_KEY) : null;
-  const serperApiKey = apiKey || getParamValue(ENV_NAMES.SERPER_API_KEY);
+  // 直接从环境变量读取API密钥
+  const serperApiKey = process.env.SHANGJI_SERPER_DEV_WEB_SEARCH_KEY;
   
   if (!serperApiKey) {
     throw new Error('Google搜索API密钥未设置');

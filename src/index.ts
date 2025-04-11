@@ -20,6 +20,9 @@ import fs from 'fs';
 import { WebCrawler } from "./crawler.js";
 import { verifyCompanyMatch } from "./llm.js";
 import { getParamValue, ENV_NAMES } from "./config/env.js";
+import * as dotenv from 'dotenv';
+import * as path from 'path';
+import { fileURLToPath } from 'url';
 
 // 简单日志辅助函数，在开发时使用文件记录而不是控制台输出
 const logger = {
@@ -48,6 +51,25 @@ const logger = {
     }
   }
 };
+
+// 在ES模块中获取当前文件路径和目录
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// 明确指定.env文件的绝对路径
+const envPath = path.resolve(__dirname, '../.env');
+// 移除所有控制台输出，使用文件日志记录
+// console.log('尝试加载.env文件:', envPath);
+
+// 加载.env文件并输出结果
+const result = dotenv.config({ path: envPath });
+if (result.error) {
+  // console.error('加载.env文件失败:', result.error);
+  logger.error(`加载.env文件失败: ${result.error}`);
+} else {
+  // console.log('.env文件加载成功');
+  logger.info('环境变量加载成功');
+}
 
 /**
  * Create an MCP server with tools capabilities.

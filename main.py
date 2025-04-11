@@ -25,6 +25,7 @@ class MCPServerStdio:
         """
         self.command = params.get("command", "node")
         self.args = params.get("args", [])
+        self.env = params.get("env", None)  # 添加环境变量支持
         self.process = None
         self.cache_tools_list = cache_tools_list
         self._tools_cache = None
@@ -38,7 +39,8 @@ class MCPServerStdio:
             *cmd,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
+            stderr=asyncio.subprocess.PIPE,
+            env=self.env  # 传递环境变量给子进程
         )
         
         # 发送初始化请求
@@ -96,16 +98,36 @@ class MCPServerStdio:
         
         # 读取响应
         try:
-            response_line = await self.process.stdout.readline()
+            # 增加超时时间
+            timeout = 30  # 秒
+            response_line = await asyncio.wait_for(self.process.stdout.readline(), timeout)
+            
             if not response_line:
-                raise Exception("空响应")
+                # 读取错误输出以便诊断
+                stderr_data = await self.process.stderr.read(1024)
+                if stderr_data:
+                    logging.error(f"MCP服务器错误输出: {stderr_data.decode()}")
+                raise Exception("空响应，可能是Node.js子进程没有输出")
                 
-            response = json.loads(response_line.decode())
+            try:
+                response = json.loads(response_line.decode())
+            except json.JSONDecodeError as e:
+                logging.error(f"JSON解析错误: {e}")
+                logging.error(f"收到的原始响应: {response_line.decode()}")
+                raise Exception(f"无法解析JSON响应: {e}")
             
             if "error" in response:
                 raise Exception(f"MCP服务器错误: {response['error']}")
             
             return response.get("result")
+        except asyncio.TimeoutError:
+            logging.error(f"等待MCP服务器响应超时")
+            # 读取错误输出以便诊断
+            if self.process.stderr:
+                stderr_data = await self.process.stderr.read(1024)
+                if stderr_data:
+                    logging.error(f"服务器错误输出: {stderr_data.decode()}")
+            raise Exception("等待MCP服务器响应超时")
         except Exception as e:
             logging.error(f"MCP服务器通信错误: {e}")
             if self.process.stderr:
